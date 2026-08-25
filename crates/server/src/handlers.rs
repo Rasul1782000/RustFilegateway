@@ -29,6 +29,7 @@ pub async fn serve_index() -> Html {
 <li>GET /api/files</li>\
 <li>GET /api/files/:id</li>\
 <li>DELETE /api/files/:id</li>\
+<li>GET /api/files/:id/download</li>\
 <li>GET /api/search?q=...</li>\
 <li>GET /api/stats</li>\
 </ul></body></html>"
@@ -161,6 +162,36 @@ pub async fn get_stats(State(state): State<AppState>) -> impl IntoResponse {
             }))
             .into_response()
         }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Download / reassemble a file by id.
+pub async fn download_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.gateway.get_file(&id) {
+        Ok(Some(record)) => {
+            let name = record.name.clone();
+            match state.gateway.reassemble_file(&id) {
+                Ok(bytes) => {
+                    let headers = [
+                        (
+                            axum::http::header::CONTENT_DISPOSITION,
+                            format!("attachment; filename=\"{}\"", name),
+                        ),
+                        (
+                            axum::http::header::CONTENT_TYPE,
+                            "application/octet-stream".to_string(),
+                        ),
+                    ];
+                    (headers, bytes).into_response()
+                }
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            }
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "file not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

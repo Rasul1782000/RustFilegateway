@@ -17,17 +17,17 @@ pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// Directory where chunks and the metadata database are stored.
-    #[arg(long, default_value = "./storage")]
-    pub storage_path: PathBuf,
+    #[arg(long)]
+    pub storage_path: Option<PathBuf>,
     /// HTTP port to listen on.
     #[arg(long, default_value_t = 3000)]
     pub port: u16,
     /// Average FastCDC chunk size in bytes.
-    #[arg(long, default_value_t = 1024 * 1024)]
-    pub chunk_size: usize,
+    #[arg(long)]
+    pub chunk_size: Option<usize>,
     /// Default compression level (1-9).
-    #[arg(long, default_value_t = 3)]
-    pub compression_level: i32,
+    #[arg(long)]
+    pub compression_level: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,9 +62,15 @@ pub fn load_config() -> (GatewayConfig, u16) {
         GatewayConfig::default()
     };
 
-    config.storage_path = cli.storage_path;
-    config.chunk_size = cli.chunk_size;
-    config.compression_level = cli.compression_level;
+    if let Some(p) = cli.storage_path {
+        config.storage_path = p;
+    }
+    if let Some(cs) = cli.chunk_size {
+        config.chunk_size = cs;
+    }
+    if let Some(lvl) = cli.compression_level {
+        config.compression_level = lvl;
+    }
 
     (config, cli.port)
 }

@@ -109,3 +109,109 @@ pub fn entropy(data: &[u8]) -> f64 {
     }
     e
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GatewayConfig;
+
+    fn engine() -> CompressionEngine {
+        CompressionEngine::new(&GatewayConfig::default()).unwrap()
+    }
+
+    #[test]
+    fn entropy_empty_data() {
+        assert_eq!(entropy(b""), 0.0);
+    }
+
+    #[test]
+    fn entropy_uniform_data() {
+        assert_eq!(entropy(&[0u8; 1024]), 0.0);
+    }
+
+    #[test]
+    fn entropy_high_for_random() {
+        let data: Vec<u8> = (0..256).map(|i| i as u8).collect();
+        let e = entropy(&data);
+        assert!(e > 7.0, "expected high entropy, got {}", e);
+    }
+
+    #[test]
+    fn entropy_low_for_repetitive() {
+        let mut data = vec![0u8; 1000];
+        data.extend(std::iter::repeat(1u8).take(1000));
+        let e = entropy(&data);
+        assert!(e < 1.5, "expected low entropy, got {}", e);
+    }
+
+    #[test]
+    fn compress_decompress_lz4_roundtrip() {
+        let eng = engine();
+        let data = b"the quick brown fox jumps over the lazy dog";
+        let compressed = eng.compress(data, CompressionType::Lz4).unwrap();
+        let decompressed = eng.decompress(&compressed, CompressionType::Lz4).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn compress_decompress_deflate_roundtrip() {
+        let eng = engine();
+        let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
+        let compressed = eng
+            .compress(&data, CompressionType::Deflate(6))
+            .unwrap();
+        let decompressed = eng
+            .decompress(&compressed, CompressionType::Deflate(6))
+            .unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn compress_decompress_none_roundtrip() {
+        let eng = engine();
+        let data = b"no compression needed";
+        let compressed = eng.compress(data, CompressionType::None).unwrap();
+        let decompressed = eng.decompress(&compressed, CompressionType::None).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn select_none_for_small_data() {
+        let eng = engine();
+        let data = vec![0u8; 512];
+        assert_eq!(eng.select(&data), CompressionType::None);
+    }
+
+    #[test]
+    fn select_none_for_low_entropy() {
+        let eng = engine();
+        let data = vec![0u8; 4096];
+        assert_eq!(eng.select(&data), CompressionType::None);
+    }
+
+    #[test]
+    fn select_lz4_for_medium_entropy() {
+        let eng = engine();
+        let mut data = Vec::new();
+        for i in 0..4096 {
+            data.push((i % 64) as u8);
+        }
+        let selected = eng.select(&data);
+        assert!(
+            selected == CompressionType::Lz4 || selected == CompressionType::Deflate(3),
+            "expected LZ4 or Deflate for medium entropy, got {:?}",
+            selected
+        );
+    }
+
+    #[test]
+    fn lz4_compressed_is_smaller_for_repetitive() {
+        let eng = engine();
+        let data = vec![42u8; 10000];
+        let compressed = eng.compress(&data, CompressionType::Lz4).unwrap();
+        assert!(
+            compressed.len() < data.len(),
+            "LZ4 should compress repetitive data"
+        );
+    }
+}

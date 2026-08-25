@@ -31,6 +31,13 @@ pub struct FileRecord {
     pub dedup_saved: u64,
     /// RFC3339 creation timestamp.
     pub created_at: String,
+    /// Ordered list of chunk hashes (blake3 hex) that compose this file.
+    pub chunk_hashes: Vec<String>,
+    /// Ordered list of original chunk sizes (bytes) corresponding to chunk_hashes.
+    pub chunk_sizes: Vec<usize>,
+    /// Ordered list of compression type names used for each chunk.
+    /// One of: "none", "lz4", "deflate".
+    pub chunk_compressions: Vec<String>,
 }
 
 /// Storage engine owning the chunk directory and the metadata database.
@@ -112,18 +119,30 @@ impl StorageEngine {
         }
     }
 
-    /// Delete a file record by id. Returns `true` if a record was removed.
+    /// Delete a file record by id and clean up orphaned chunks.
+    /// Returns `true` if a record was removed.
     pub fn delete_file(&self, id: &str) -> GatewayResult<bool> {
-        let write = self.db.begin_write()?;
-        let removed = {
-            let mut table = write.open_table(FILE_TABLE)?;
-            let opt = table.remove(id)?;
-            let is_some = opt.is_some();
-            drop(opt);
-            is_some
+        let record = self.get_file(id)?;
+        let record = match record {
+            Some(r) => r,
+            None => return Ok(false),
         };
+
+        let write = self.db.begin_write()?;
+        {
+            let mut table = write.open_table(FILE_TABLE)?;
+            table.remove(id)?;
+        }
         write.commit()?;
-        Ok(removed)
+
+        for hash in &record.chunk_hashes {
+            let path = self.chunk_path(hash);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+
+        Ok(true)
     }
 
     /// Aggregate (total_original, total_compressed, total_dedup_saved).
@@ -144,5 +163,28 @@ impl StorageEngine {
     pub fn search(&self, query: &str) -> GatewayResult<Vec<FileRecord>> {
         let files = self.list_files()?;
         Ok(crate::search::search_files(&files, query))
+    }
+
+    /// Reassemble a file from its stored chunks.
+    /// Returns the original file bytes.
+    pub fn reassemble_file(&self, record: &FileRecord) -> GatewayResult<Vec<u8>> {
+        use crate::compression::CompressionEngine;
+        use crate::GatewayConfig;
+
+        let config = GatewayConfig::default();
+        let engine = CompressionEngine::new(&config)?;
+
+        let mut output = Vec::with_capacity(record.original_size as usize);
+        for (hash, compression_type) in record.chunk_hashes.iter().zip(record.chunk_compressions.iter()) {
+            let chunk_data = self.read_chunk(hash)?;
+            let ctype = match compression_type.as_str() {
+                "lz4" => crate::compression::CompressionType::Lz4,
+                "deflate" => crate::compression::CompressionType::Deflate(config.compression_level),
+                _ => crate::compression::CompressionType::None,
+            };
+            let decompressed = engine.decompress(&chunk_data, ctype)?;
+            output.extend_from_slice(&decompressed);
+        }
+        Ok(output)
     }
 }

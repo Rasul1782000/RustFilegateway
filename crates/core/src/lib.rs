@@ -186,13 +186,10 @@ impl Gateway {
             .unwrap_or("unknown")
             .to_string();
 
-        if !self.config.dedup_enabled && !self.config.compression_enabled {
-            return Err(GatewayError::Chunking(
-                "gateway configured with no processing enabled".into(),
-            ));
-        }
-
-        let bytes = std::fs::read(path)?;
+        let path_clone = path.clone();
+        let bytes = tokio::task::spawn_blocking(move || std::fs::read(&path_clone))
+            .await
+            .map_err(|e| GatewayError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
         let data: &[u8] = &bytes;
 
         if (data.len() as u64) > self.config.max_file_size {
@@ -219,6 +216,9 @@ impl Gateway {
         let mut dedup_saved: u64 = 0;
         let mut unique_chunks: usize = 0;
         let mut chunk_count: usize = 0;
+        let mut chunk_hashes = Vec::with_capacity(chunks.len());
+        let mut chunk_sizes = Vec::with_capacity(chunks.len());
+        let mut chunk_compressions = Vec::with_capacity(chunks.len());
 
         for c in &chunks {
             let chunk_data = &data[c.offset..c.offset + c.length];
@@ -227,6 +227,7 @@ impl Gateway {
 
             chunk_count += 1;
             original_size += c.length as u64;
+            chunk_sizes.push(c.length);
 
             if is_new {
                 unique_chunks += 1;
@@ -235,9 +236,16 @@ impl Gateway {
                 self.storage.store_chunk(&hash, &compressed)?;
                 self.dedup.mark_stored(&hash)?;
                 compressed_size += compressed.len() as u64;
+                chunk_compressions.push(match ctype {
+                    compression::CompressionType::None => "none".to_string(),
+                    compression::CompressionType::Lz4 => "lz4".to_string(),
+                    compression::CompressionType::Deflate(_) => "deflate".to_string(),
+                });
             } else {
                 dedup_saved += c.length as u64;
+                chunk_compressions.push("none".to_string());
             }
+            chunk_hashes.push(hash);
         }
 
         let record = storage::FileRecord {
@@ -250,6 +258,9 @@ impl Gateway {
             unique_chunks,
             dedup_saved,
             created_at: chrono::Utc::now().to_rfc3339(),
+            chunk_hashes,
+            chunk_sizes,
+            chunk_compressions,
         };
         self.storage.save_file_record(&record)?;
 
@@ -302,5 +313,14 @@ impl Gateway {
     /// Return aggregate statistics across all stored files.
     pub fn stats(&self) -> GatewayResult<(u64, u64, u64)> {
         self.storage.stats()
+    }
+
+    /// Reassemble a file from its stored chunks and return the original bytes.
+    pub fn reassemble_file(&self, id: &str) -> GatewayResult<Vec<u8>> {
+        let record = self
+            .storage
+            .get_file(id)?
+            .ok_or_else(|| GatewayError::NotFound(id.to_string()))?;
+        self.storage.reassemble_file(&record)
     }
 }

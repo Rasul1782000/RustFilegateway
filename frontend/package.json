@@ -15,7 +15,6 @@
     "@tanstack/react-query": "^5.0.0",
     "react-filepond": "^7.0.0",
     "filepond": "^4.0.0",
-    "filepond-plugin-file-validate-type": "^1.2.0",
     "filepond-plugin-file-validate-size": "^2.0.0"
   },
   "devDependencies": {

@@ -12,7 +12,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::load_config;
-use crate::handlers::{AppState, delete_file, get_file, get_stats, list_files, search_files, serve_index, upload_file};
+use crate::handlers::{AppState, delete_file, download_file, get_file, get_stats, list_files, search_files, serve_index, upload_file};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/files", get(list_files))
         .route("/api/files/:id", get(get_file))
         .route("/api/files/:id", delete(delete_file))
+        .route("/api/files/:id/download", get(download_file))
         .route("/api/search", get(search_files))
         .route("/api/stats", get(get_stats))
         .layer(CorsLayer::permissive())
