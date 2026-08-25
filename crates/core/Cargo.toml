@@ -1,0 +1,24 @@
+[package]
+name = "file-gateway-core"
+version = "2.0.0"
+edition = "2021"
+description = "Pure-Rust file processing core: FastCDC chunking, deduplication, compression and storage"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+blake3 = { version = "1", features = ["rayon", "std"] }
+fastcdc = "5"
+lz4_flex = "0.11"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+redb = "2"
+dashmap = "6"
+rayon = "1"
+walkdir = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
